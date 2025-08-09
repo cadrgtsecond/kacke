@@ -1,0 +1,225 @@
+# Kacke
+
+A formal proof that Kakoune's normal mode language is turing complete
+
+Kakoune is a powerful text editor
+and my favourite
+due to its powerful editing language.
+It is well known that Kakoune's scripting language is turing complete[^turing-completeness]
+(See [Eine Kleine Forthmachine][]).
+In this document,
+we shall prove that Kakoune's editing language
+is also turing complete.
+
+[Eine Kleine Forthmachine]: https://discuss.kakoune.com/t/eine-kleine-forth-machine/1957
+
+[^turing-completeness]: Well, assuming an infinitely large stack.
+Kakscript only allows a finite number of iterations,
+and recursion will eventually blow up the stack.
+`kak-stkmach` just uses a really large (but still finite) number of iterations for looping
+and then recurses if that fails.
+
+## Rules
+
+Here are our rules.
+
+1. The buffer is infinite in size.
+A reasonable restriction as no computer actually has infinite memory
+
+2. Since there is no built-in way to loop forever in normal mode[^recursive-macros],
+we shall employ the help of a monkey.
+
+  He simply repeats a set of keys
+  until the buffer stops changing.
+  At which point he gets bored and stops.
+
+3. We will not use `:` to enter command mode,
+nor shall we use Kakscript.
+
+4. We are allowed to use regexes [^regex].
+Though this is mainly because it's just the only way to `s` plit selections
+
+5. Marks, Macros, and any other feature not mentioned is allowed.
+
+[^recursive-macros]: A recursive macro sadly throws an error
+[^regex]: As far as the author is aware,
+Regexes(especially Kakoune's) are not turing complete,
+so we aren't "cheating".
+
+## Introduction
+
+To prove that a language is turing complete,
+we simply need to prove that it can interpret a language already known to be turing complete.
+This is a common stratergy to prove things in Computer Science
+(e.g for proving NP-completeness)
+
+Our target language will be a variant [Smallfuck][],
+which is the simpler brother of the infamous [Brainfuck][].
+Rather than using a tape of numbers,
+we use a tape of bits.
+
+The interpreter begins with an infinite list of bits,
+initialized to zero
+(we represent this using a line)
+
+There are only five operations
+
+|:-------:|---------------------------------------------------------|
+| `+`     | Invert the current bit                                  |
+| `<`     | Move the tape head left                                 |
+| `>`     | Move the tape head right                                |
+| `[`     | Jump past matching `]` if the current tape cell holds 0 |
+| `]`     | Unconditionally jump back to `[`                        |
+
+There are no input/output commands.
+We can simply treat the initial state of the tape as input,
+and the final state after halting as the output.
+
+Example program:
+Hello world
+```
+>+>>>+>>>>>+>+>>>+>>+>>+>+>>+>+>>>>+>+>>+>+>>>>+>+>>+>+>+>+>>>+>>>>>>>+>>+>>+>+>+>>+>+>>+>+>+>+>>+>+>+>>>+>>>+>+>>+>+>>>>+>+>>>+>>>
+```
+
+A script `gen.k` is included that generates programs for printing arbitrary text.
+
+## Why this is possible
+
+There are roughly three things needed to be turing complete.[^intuition-caveats]
+
+1. Some way to create new data e.g Unbounded Arithmetic, `cons`, Tuples, String Concatenation etc.
+2. Some way to branch on data e.g `if`, but also `for ... in` loops
+3. Some way to recurse/loop
+
+Considering turing incomplete languages,
+The C preprocessor has `1` and `2` but not `3`,
+whereas [Datalog][] supports `2` and `3` but not `1`.
+
+For Kakoune,
+
+- `1` is obviously provided by all of the editor commands
+which allow for creating and editing text.
+- `2` is provided by `<a-k>` which allows us to filter selections by a regex.
+  We abuse the fact that whenever a macro executes and a command fails(such as `<a-k>`),
+  Kakoune will interrupt the macro.
+  This mechanism is somewhat rudimentary as you cannot nest conditionals in any manner,
+  but will do for our purposes.
+- `3` is provided by the Monkey.
+
+The workaround is described below.
+
+[Datalog]: https://en.wikipedia.org/wiki/Datalog
+[^intuition-caveats]: Note that these are not strict requirements.
+These requirements are pretty vague
+and often it's not simple to see that a system satisfies all these properties
+(e.g [Rule 110][]).
+A real proof involves reducing to a known Turing complete system.
+
+[Rule 110]: https://en.wikipedia.org/wiki/Rule_110
+
+## Starting state
+
+The interpreter starts out in the following state
+with a buffer as follows.
+
+```
+00000000000000000000000000000000000000000000000
+
+>>>+>+>>+>+>+>+>+>+>>+>>+> ...
+```
+
+The first line is simply a list of zeroes.
+This need not be infinite,
+since the interpreter can dynamically increase "tape size" upon reaching one end.
+
+The second line stores the actual code.
+
+We use two marks,
+`d` to store the location of the "data" and
+`c` to store the location of the "code"
+These serve a similar purpose to registers like `rax` and `rip` in a regular computer.
+They are initialized to the beginning of their respective lines.
+
+We also need to initialze a few registers with macros,
+which will be described in the next section
+
+[Smallfuck]: https://esolangs.org/wiki/Smallfuck
+[Brainfuck]: https://en.wikipedia.org/wiki/Brainfuck
+
+## Actual algorithm
+
+Behold:
+```
+"aq"cz"zq"cz"hq"cz"lq"cz"jq"cz"kq"cz"pq"cz"nq"cZ
+```
+
+`a` and `z` macros are mainly for bookkeeping.
+They simply check if the data pointer has reached one end
+and add a zero to that side if it has.
+
+- `a`: `"dz<a-k>^<ret>i0<esc>`
+- `z`: `"dzl<a-k>$<ret>i0<esc>`
+
+Then, we have the movement keys,
+`<` and `>`
+in registers `h` and `l`,
+which are as follows.
+
+- `h`: `<a-k><lt><ret>"dzh"dZ`
+- `l`: `<a-k><gt><ret>"dzl"dZ`
+
+Swapping a bit is a bit more complex.
+You actually need two macros.
+
+- `j` checks if `c` is at a `+` *AND* `d` is at `1` and decrements it if it is.
+- `k` checks if `c` is at a `+` *AND* `d` is at `0` and increments it if it is.
+
+We need to do this because this because macro based branching can't be nested.
+
+They are almost identical,
+just with a `0` and `1` swapped.
+Note that we need to reset the mark `d` after `r`
+because otherwise Kakoune thinks the mark has moved.
+
+- `j`: `<a-k>\+<ret>"dz<a-k>1<ret>r0"dZ`
+- `k`: `<a-k>\+<ret>"dz<a-k>0<ret>r1"dZ`
+
+Finally, we reach `p` and `n`,
+which implement `]` and `[` respectively.
+They are the most complex of the macros.
+
+- `p`: `<a-k>\]<ret>m;`
+- `n`: `<a-k>\[<ret>"dz<a-k>0<ret>"czml"cZ`
+
+`p` is an almost direct translation of the definition.
+Here, we use `m` to jump to the matching brace easily.
+
+`n` needs to jump a bit back and forth to acheive it's task.
+It simply jumps to `d`, checks if it is 0, in which case
+it jumps back, and moves past the matching `]`.
+
+Finally, `l` moves to the next instruction, and the monkey keeps repeating it's task.
+All files in Kakoune are guaranteed to end in a newline,
+so if the program reaches the last instruction,
+this will cause all of the aforementioned macros to fail,
+and so the screen will not change.
+
+## Usage
+A Kakscript file is included,
+which may be sourced to get all registers set up
+
+```
+source kacke.kak
+```
+
+Then open a file and set marks as follows
+
+```
+[^d]0
+
+[^c]program
+```
+
+where `[^alpha]` indicates a mark at the character after
+
+TODO: Implement `keys.txt` and `monkey.sh` to show that this isn't really dependent on Kakscript
