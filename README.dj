@@ -64,6 +64,7 @@ initialized to zero
 
 There are only five operations
 
+|Command  | Operation                                               |
 |:-------:|---------------------------------------------------------|
 | `+`     | Invert the current bit                                  |
 | `<`     | Move the tape head left                                 |
@@ -205,6 +206,7 @@ this will cause all of the aforementioned macros to fail,
 and so the screen will not change.
 
 ## Usage
+
 A Kakscript file is included,
 which may be sourced to get all registers set up
 
